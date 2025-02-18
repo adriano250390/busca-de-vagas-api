@@ -2,7 +2,7 @@ from fastapi import FastAPI
 import requests
 import redis
 import os
-from bs4 import BeautifulSoup  # Importa BeautifulSoup para processar o HTML
+from bs4 import BeautifulSoup
 
 app = FastAPI()
 
@@ -36,32 +36,42 @@ def buscar_vagas(termo: str, cidade: str = None):
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Lista para armazenar as vagas
-        vagas = []
+        # 🔍 Testando possíveis seletores
+        seletores_teste = ["div.vaga-box", "div.vaga", "div.vaga-container"]
 
-        # Encontrando todas as vagas no HTML correto
-        for vaga in soup.find_all("div", class_="vaga-box"):  # Ajuste conforme a estrutura do HTML
-            titulo_elemento = vaga.find("a", class_="vaga-titulo")
-            empresa_elemento = vaga.find("span", class_="vaga-empresa")
-            localizacao_elemento = vaga.find("span", class_="vaga-localizacao")
-            link_elemento = vaga.find("a", class_="vaga-titulo")
+        for seletor in seletores_teste:
+            vagas = soup.select(seletor)
+            if vagas:
+                break  # Se encontrar pelo menos 1 vaga, usa esse seletor
+        
+        # Se nenhum seletor encontrar vagas, salva o HTML de resposta para debug
+        if not vagas:
+            with open("debug.html", "w", encoding="utf-8") as file:
+                file.write(response.text)
+            return {"error": "Nenhuma vaga encontrada.", "url": url, "debug": "Arquivo debug.html salvo"}
+
+        lista_vagas = []
+        for vaga in vagas:
+            titulo_elemento = vaga.find("a", class_="vaga-titulo") or vaga.find("h2")
+            empresa_elemento = vaga.find("span", class_="vaga-empresa") or vaga.find("div", class_="empresa")
+            localizacao_elemento = vaga.find("span", class_="vaga-localizacao") or vaga.find("div", class_="localizacao")
+            link_elemento = vaga.find("a", class_="vaga-titulo") or vaga.find("a")
 
             titulo = titulo_elemento.text.strip() if titulo_elemento else "Sem título"
             empresa = empresa_elemento.text.strip() if empresa_elemento else "Empresa não informada"
             localizacao = localizacao_elemento.text.strip() if localizacao_elemento else "Local não informado"
             link = f"https://www.empregos.com.br{link_elemento['href']}" if link_elemento else "#"
 
-            vagas.append({
+            lista_vagas.append({
                 "titulo": titulo,
                 "empresa": empresa,
                 "localizacao": localizacao,
                 "link": link
             })
 
-        if vagas:
-            cache.set(termo, str(vagas), ex=3600)  # Cache por 1 hora
-            return {"source": "live", "data": vagas}
-        else:
-            return {"error": "Nenhuma vaga encontrada.", "html": response.text[:1000]}
+        # Salva no cache apenas se houver resultados
+        cache.set(termo, str(lista_vagas), ex=3600)
+
+        return {"source": "live", "data": lista_vagas}
 
     return {"error": "Falha na busca de vagas"}
