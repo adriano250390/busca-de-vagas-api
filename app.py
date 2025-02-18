@@ -51,8 +51,13 @@ def buscar_vagas(termo: str):
 
     # Verifica se já tem essa busca no cache
     cached_data = cache.get(termo)
+    
     if cached_data:
-        return {"source": "cache", "data": json.loads(cached_data)}
+        try:
+            return {"source": "cache", "data": json.loads(cached_data)}
+        except json.JSONDecodeError:
+            cache.delete(termo)  # Se o JSON estiver inválido, remove do cache
+            return {"error": "Erro ao decodificar JSON no cache. O cache foi limpo."}
 
     # Faz a requisição ao site de empregos
     url = f"{BASE_URL}/{termo}"
@@ -64,13 +69,12 @@ def buscar_vagas(termo: str):
     if response.status_code == 200:
         vagas_extraidas = extrair_dados(response.text)
 
-        # Se não encontrou vagas, logamos a página para verificar os seletores
         if not vagas_extraidas:
             with open("debug.html", "w", encoding="utf-8") as file:
                 file.write(response.text)
             return {"error": "Nenhuma vaga encontrada. Verifique os seletores no HTML.", "debug": "Arquivo debug.html salvo"}
 
-        # Salvar no cache por 1 hora
+        # Salvar no cache apenas se os dados forem válidos
         cache.set(termo, json.dumps(vagas_extraidas), ex=3600)
         return {"source": "live", "data": vagas_extraidas}
 
