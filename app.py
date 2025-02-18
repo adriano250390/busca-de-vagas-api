@@ -14,12 +14,12 @@ cache = redis.from_url(REDIS_URL, decode_responses=True)
 JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
 JOOBLE_API_URL = "https://br.jooble.org/api/"
 
-# 🔥 Habilitar CORS para evitar bloqueios no navegador
+# 🔥 Habilitar CORS corretamente
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Se quiser restringir, substitua "*" pelo seu domínio ex: ["https://seusite.com"]
+    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # Permita apenas seu site
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -54,7 +54,7 @@ def buscar_vagas(termo: str, localizacao: str = ""):
                 "empresa": vaga.get("company", "Empresa não informada"),
                 "localizacao": vaga.get("location", "Local não informado"),
                 "salario": vaga.get("salary", "Salário não informado"),
-                "data_atualizacao": vaga.get("updated", "Data não informada"),  # 🗓️ Data da vaga
+                "data_atualizacao": vaga.get("updated", "Data não informada"),
                 "link": vaga.get("link", "#")
             })
 
