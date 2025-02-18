@@ -2,76 +2,77 @@ from fastapi import FastAPI
 import requests
 import redis
 import os
-from bs4 import BeautifulSoup
 
 app = FastAPI()
 
-@app.get("/")
-def home():
-    return {"message": "API de busca de vagas está rodando!"}
+# 🔑 Chave da API do Scrapingdog
+API_KEY = "67b47bd0bc3ed73cbdfab7ba"
+
+# URL base do Scrapingdog para Indeed
+SCRAPINGDOG_URL = "https://api.scrapingdog.com/indeed"
 
 # Configuração do Redis (cache)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
 
-# URL base do site de empregos
-JOBS_API_URL = "https://www.empregos.com.br/vagas"
+@app.get("/")
+def home():
+    return {"message": "API de busca de vagas está rodando!"}
 
 @app.get("/buscar")
-def buscar_vagas(termo: str, cidade: str = None):
-    """Busca vagas de emprego no site Empregos.com.br e retorna títulos, empresas e localizações."""
-    
-    # Construção da URL com cargo e cidade
-    if cidade:
-        url = f"{JOBS_API_URL}/{cidade.replace(' ', '-').lower()}/sp/{termo.replace(' ', '-').lower()}"
-    else:
-        url = f"{JOBS_API_URL}/{termo.replace(' ', '-').lower()}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+def buscar_vagas(termo: str, local: str = ""):
+    """
+    Busca vagas de emprego no Indeed via API do Scrapingdog.
+    """
+
+    # Verifica se já tem essa busca no cache
+    cache_key = f"{termo}_{local}"
+    cached_data = cache.get(cache_key)
+    if cached_data:
+        return {"source": "cache", "data": cached_data}
+
+    # Criando a URL de busca do Indeed
+    job_search_url = f"https://www.indeed.com/jobs?q={termo}&l={local}"
+
+    # Parâmetros para a API do Scrapingdog
+    params = {
+        "api_key": API_KEY,
+        "url": job_search_url
     }
 
-    response = requests.get(url, headers=headers)
+    # Fazendo a requisição via Scrapingdog
+    response = requests.get(SCRAPINGDOG_URL, params=params)
 
     if response.status_code == 200:
-        soup = BeautifulSoup(response.text, "html.parser")
+        try:
+            json_response = response.json()
 
-        # 🔍 Testando possíveis seletores
-        seletores_teste = ["div.vaga-box", "div.vaga", "div.vaga-container"]
+            # Verifica se há resultados válidos
+            if "jobs" not in json_response or not json_response["jobs"]:
+                return {"error": "Nenhuma vaga encontrada."}
 
-        for seletor in seletores_teste:
-            vagas = soup.select(seletor)
-            if vagas:
-                break  # Se encontrar pelo menos 1 vaga, usa esse seletor
-        
-        # Se nenhum seletor encontrar vagas, salva o HTML de resposta para debug
-        if not vagas:
-            with open("debug.html", "w", encoding="utf-8") as file:
-                file.write(response.text)
-            return {"error": "Nenhuma vaga encontrada.", "url": url, "debug": "Arquivo debug.html salvo"}
+            vagas = []
 
-        lista_vagas = []
-        for vaga in vagas:
-            titulo_elemento = vaga.find("a", class_="vaga-titulo") or vaga.find("h2")
-            empresa_elemento = vaga.find("span", class_="vaga-empresa") or vaga.find("div", class_="empresa")
-            localizacao_elemento = vaga.find("span", class_="vaga-localizacao") or vaga.find("div", class_="localizacao")
-            link_elemento = vaga.find("a", class_="vaga-titulo") or vaga.find("a")
+            # Processando os dados das vagas
+            for vaga in json_response["jobs"]:
+                titulo = vaga.get("title", "Sem título")
+                empresa = vaga.get("company", "Empresa não informada")
+                localizacao = vaga.get("location", "Local não informado")
+                link = vaga.get("link", "#")
 
-            titulo = titulo_elemento.text.strip() if titulo_elemento else "Sem título"
-            empresa = empresa_elemento.text.strip() if empresa_elemento else "Empresa não informada"
-            localizacao = localizacao_elemento.text.strip() if localizacao_elemento else "Local não informado"
-            link = f"https://www.empregos.com.br{link_elemento['href']}" if link_elemento else "#"
+                vagas.append({
+                    "titulo": titulo,
+                    "empresa": empresa,
+                    "localizacao": localizacao,
+                    "link": link
+                })
 
-            lista_vagas.append({
-                "titulo": titulo,
-                "empresa": empresa,
-                "localizacao": localizacao,
-                "link": link
-            })
+            # Cacheando os resultados por 1 hora
+            cache.set(cache_key, str(vagas), ex=3600)
 
-        # Salva no cache apenas se houver resultados
-        cache.set(termo, str(lista_vagas), ex=3600)
+            return {"source": "live", "data": vagas}
 
-        return {"source": "live", "data": lista_vagas}
+        except Exception as e:
+            return {"error": "Erro ao processar os dados", "exception": str(e)}
 
-    return {"error": "Falha na busca de vagas"}
+    return {"error": "Falha na busca de vagas", "status_code": response.status_code}
