@@ -24,7 +24,8 @@ def buscar_vagas(termo: str):
     # Verifica se já tem essa busca no cache
     cached_data = cache.get(termo)
     if cached_data:
-        return {"source": "cache", "data": eval(cached_data)}
+        return {"source": "cache", "data": cached_data}
+
 
     # Faz a requisição ao site de vagas
     url = f"{JOBS_API_URL}/{termo}"  # Ajustando a URL de busca
