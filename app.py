@@ -4,6 +4,9 @@ import redis
 import os
 
 app = FastAPI()
+@app.get("/")
+def home():
+    return {"message": "API de busca de vagas está rodando!"}
 
 # Configuração do Redis (cache)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
