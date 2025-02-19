@@ -78,12 +78,12 @@ def buscar_vagas(localizacao: str, termo: str = None):
                         data_formatada = datetime.strptime(data_atualizacao, "%Y-%m-%dT%H:%M:%S")
                         data_exibicao = data_formatada.strftime("%d/%m/%Y")
                     else:
-                        data_formatada = datetime.min
-                        data_exibicao = "Data não informada"
+                        data_formatada = datetime.today()  # Se não tiver, assume hoje
+                        data_exibicao = datetime.today().strftime("%d/%m/%Y")
                 except Exception as e:
-                    print(f"❌ Erro ao converter data: {e} - Valor recebido: {data_atualizacao}")  # DEBUG: Mostra erros de conversão
-                    data_formatada = datetime.min
-                    data_exibicao = "Data não informada"
+                    print(f"❌ Erro ao converter data: {e} - Valor recebido: {data_atualizacao}")  # DEBUG
+                    data_formatada = datetime.today()
+                    data_exibicao = datetime.today().strftime("%d/%m/%Y")
 
                 vagas.append({
                     "titulo": vaga.get("title", "Sem título"),
