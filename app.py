@@ -73,11 +73,15 @@ def buscar_vagas(localizacao: str, termo: str = None):
                 data_atualizacao = vaga.get("updated", "")
 
                 try:
-                    # ✅ Converter a data para um formato válido (YYYY-MM-DD)
-                    data_formatada = datetime.strptime(data_atualizacao, "%Y-%m-%dT%H:%M:%S") if data_atualizacao else None
-                    data_exibicao = data_formatada.strftime("%d/%m/%Y") if data_formatada else "Data não informada"
+                    # ✅ Se a data existe, converter para formato DD/MM/YYYY
+                    if data_atualizacao:
+                        data_formatada = datetime.strptime(data_atualizacao, "%Y-%m-%dT%H:%M:%S")
+                        data_exibicao = data_formatada.strftime("%d/%m/%Y")
+                    else:
+                        data_formatada = datetime.min  # Definir data mínima para ordenação correta
+                        data_exibicao = "Data não informada"
                 except:
-                    data_formatada = None  # Se falhar, assume que a data não está disponível
+                    data_formatada = datetime.min
                     data_exibicao = "Data não informada"
 
                 vagas.append({
@@ -86,7 +90,7 @@ def buscar_vagas(localizacao: str, termo: str = None):
                     "localizacao": vaga.get("location", "Local não informado"),
                     "salario": vaga.get("salary", "Salário não informado"),
                     "data_atualizacao": data_exibicao,  # ✅ Agora sempre tem um valor correto
-                    "data_formatada": data_formatada if data_formatada else datetime.min,  # Para ordenação
+                    "data_formatada": data_formatada,  # Para ordenação correta
                     "link": vaga.get("link", "#"),
                     "descricao": vaga.get("snippet", "Descrição não disponível")
                 })
