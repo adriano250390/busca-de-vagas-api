@@ -56,6 +56,7 @@ def buscar_vagas(termo: str, localizacao: str = ""):
                 "salario": vaga.get("salary", "Salário não informado"),
                 "data_atualizacao": vaga.get("updated", "Data não informada"),
                 "link": vaga.get("link", "#")
+                "descricao": vaga.get("snippet", "Descrição não disponível")
             })
 
         if not vagas:
