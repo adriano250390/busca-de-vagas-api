@@ -32,7 +32,6 @@ def home():
 def buscar_vagas(localizacao: str, termo: str = None):
     """Busca vagas de emprego no Jooble e retorna ordenadas por data (mais recente primeiro)."""
 
-    # ✅ A cidade é obrigatória, mas o cargo (termo) é opcional
     if not localizacao:
         return {"error": "A cidade é obrigatória."}
 
@@ -70,19 +69,24 @@ def buscar_vagas(localizacao: str, termo: str = None):
                 break  # Para se não houver mais resultados
 
             for vaga in novas_vagas:
+                # 🔹 Pegamos a data diretamente da API
                 data_atualizacao = vaga.get("updated", "")
+
                 try:
+                    # ✅ Converter a data para um formato válido (YYYY-MM-DD)
                     data_formatada = datetime.strptime(data_atualizacao, "%Y-%m-%dT%H:%M:%S") if data_atualizacao else None
+                    data_exibicao = data_formatada.strftime("%d/%m/%Y") if data_formatada else "Data não informada"
                 except:
                     data_formatada = None  # Se falhar, assume que a data não está disponível
+                    data_exibicao = "Data não informada"
 
                 vagas.append({
                     "titulo": vaga.get("title", "Sem título"),
                     "empresa": vaga.get("company", "Empresa não informada"),
                     "localizacao": vaga.get("location", "Local não informado"),
                     "salario": vaga.get("salary", "Salário não informado"),
-                    "data_atualizacao": data_atualizacao if data_formatada else "Data não informada",
-                    "data_formatada": data_formatada if data_formatada else datetime.min,
+                    "data_atualizacao": data_exibicao,  # ✅ Agora sempre tem um valor correto
+                    "data_formatada": data_formatada if data_formatada else datetime.min,  # Para ordenação
                     "link": vaga.get("link", "#"),
                     "descricao": vaga.get("snippet", "Descrição não disponível")
                 })
@@ -98,6 +102,7 @@ def buscar_vagas(localizacao: str, termo: str = None):
     # 🔵 Ordenar vagas por data (mais recente primeiro)
     vagas.sort(key=lambda x: x["data_formatada"], reverse=True)
 
+    # 🔵 Remover o campo auxiliar "data_formatada" antes de retornar os resultados
     for vaga in vagas:
         vaga.pop("data_formatada", None)
 
