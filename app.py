@@ -54,8 +54,11 @@ def buscar_vagas(termo: str, localizacao: str = ""):
 
         if response.status_code == 200:
             data = response.json()
-            novas_vagas = data.get("jobs", [])
 
+            # (Opcional) Para depurar, veja o que a API está devolvendo:
+            # print(data)
+
+            novas_vagas = data.get("jobs", [])
             if not novas_vagas:  # Se não há mais vagas, parar a busca
                 break
 
