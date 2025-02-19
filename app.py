@@ -18,7 +18,7 @@ JOOBLE_API_URL = "https://br.jooble.org/api/"
 # 🔥 Habilitar CORS corretamente
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # Permite apenas seu site
+    allow_origins=["*"],  # Permitindo qualquer origem para testes
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -63,24 +63,25 @@ def buscar_vagas(localizacao: str, termo: str = None):
                 return {"error": f"Erro ao buscar vagas (HTTP {response.status_code})"}
 
             data = response.json()
+            print("🔹 Resposta Bruta da API:", data)  # DEBUG: Mostra o JSON original da API
+
             novas_vagas = data.get("jobs", [])
 
             if not novas_vagas:
                 break  # Para se não houver mais resultados
 
             for vaga in novas_vagas:
-                # 🔹 Pegamos a data diretamente da API
                 data_atualizacao = vaga.get("updated", "")
 
                 try:
-                    # ✅ Se a data existe, converter para formato DD/MM/YYYY
                     if data_atualizacao:
                         data_formatada = datetime.strptime(data_atualizacao, "%Y-%m-%dT%H:%M:%S")
                         data_exibicao = data_formatada.strftime("%d/%m/%Y")
                     else:
-                        data_formatada = datetime.min  # Definir data mínima para ordenação correta
+                        data_formatada = datetime.min
                         data_exibicao = "Data não informada"
-                except:
+                except Exception as e:
+                    print(f"❌ Erro ao converter data: {e} - Valor recebido: {data_atualizacao}")  # DEBUG: Mostra erros de conversão
                     data_formatada = datetime.min
                     data_exibicao = "Data não informada"
 
