@@ -17,7 +17,7 @@ JOOBLE_API_URL = "https://br.jooble.org/api/"
 # 🔥 Habilitar CORS corretamente
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # Permita apenas seu site
+    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # Permite apenas seu site
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -37,34 +37,48 @@ def buscar_vagas(termo: str, localizacao: str = ""):
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
-    # 🔵 Envia a requisição para a API do Jooble
-    payload = {"keywords": termo, "location": localizacao}
-    headers = {"Content-Type": "application/json"}
+    # 🔵 Busca múltiplas páginas da API Jooble
+    vagas = []
+    pagina = 1
+    max_paginas = 5  # Limite de páginas para evitar sobrecarga
 
-    response = requests.post(f"{JOOBLE_API_URL}{JOOBLE_API_KEY}", json=payload, headers=headers)
+    while pagina <= max_paginas:
+        payload = {
+            "keywords": termo,
+            "location": localizacao,
+            "page": pagina  # ✅ Paginação ativada
+        }
+        headers = {"Content-Type": "application/json"}
 
-    if response.status_code == 200:
-        data = response.json()
+        response = requests.post(f"{JOOBLE_API_URL}{JOOBLE_API_KEY}", json=payload, headers=headers)
 
-        # 🔍 Processando os resultados para retornar apenas os campos importantes
-        vagas = []
-        for vaga in data.get("jobs", []):
-            vagas.append({
-                "titulo": vaga.get("title", "Sem título"),
-                "empresa": vaga.get("company", "Empresa não informada"),
-                "localizacao": vaga.get("location", "Local não informado"),
-                "salario": vaga.get("salary", "Salário não informado"),
-                "data_atualizacao": vaga.get("updated", "Data não informada"),
-                "link": vaga.get("link", "#"),
-                "descricao": vaga.get("snippet", "Descrição não disponível")
-            })
+        if response.status_code == 200:
+            data = response.json()
+            novas_vagas = data.get("jobs", [])
 
-        if not vagas:
-            return {"error": "Nenhuma vaga encontrada."}
+            if not novas_vagas:  # Se não há mais vagas, parar a busca
+                break
 
-        # 🔵 Salva no cache por 1 hora
-        cache.set(cache_key, str(vagas), ex=3600)
+            for vaga in novas_vagas:
+                vagas.append({
+                    "titulo": vaga.get("title", "Sem título"),
+                    "empresa": vaga.get("company", "Empresa não informada"),
+                    "localizacao": vaga.get("location", "Local não informado"),
+                    "salario": vaga.get("salary", "Salário não informado"),
+                    "data_atualizacao": vaga.get("updated", "Data não informada"),
+                    "link": vaga.get("link", "#"),
+                    "descricao": vaga.get("snippet", "Descrição não disponível")
+                })
 
-        return {"source": "live", "data": vagas}
+            pagina += 1  # Avança para a próxima página
 
-    return {"error": "Falha na busca de vagas", "status_code": response.status_code}
+        else:
+            return {"error": "Erro ao buscar vagas", "status_code": response.status_code}
+
+    if not vagas:
+        return {"error": "Nenhuma vaga encontrada."}
+
+    # 🔵 Salva no cache por 1 hora
+    cache.set(cache_key, str(vagas), ex=3600)
+
+    return {"source": "live", "data": vagas}
