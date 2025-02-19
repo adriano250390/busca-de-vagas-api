@@ -6,15 +6,15 @@ import os
 
 app = FastAPI()
 
-# 🔵 Configuração do Redis (Cache)
+# Configuração do Redis (Cache)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
 
-# 🔵 Configuração da API Jooble
+# Configuração da API Jooble
 JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
 JOOBLE_API_URL = "https://br.jooble.org/api/"
 
-# 🔥 Habilitar CORS corretamente
+# Habilitar CORS corretamente
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://gray-termite-250383.hostingersite.com"],  # Permite apenas seu site
@@ -31,13 +31,13 @@ def home():
 def buscar_vagas(termo: str, localizacao: str = ""):
     """Busca vagas de emprego no Jooble e retorna títulos, empresas, localizações e datas."""
 
-    # 🔴 Verifica se já tem essa busca no cache
+    # Verifica se já tem essa busca no cache
     cache_key = f"{termo}_{localizacao}"
     cached_data = cache.get(cache_key)
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
-    # 🔵 Busca múltiplas páginas da API Jooble
+    # Busca múltiplas páginas da API Jooble
     vagas = []
     pagina = 1
     max_paginas = 5  # Limite de páginas para evitar sobrecarga
@@ -46,7 +46,7 @@ def buscar_vagas(termo: str, localizacao: str = ""):
         payload = {
             "keywords": termo,
             "location": localizacao,
-            "page": pagina  # ✅ Paginação ativada
+            "page": pagina  # Paginação ativada
         }
         headers = {"Content-Type": "application/json"}
 
@@ -78,7 +78,7 @@ def buscar_vagas(termo: str, localizacao: str = ""):
     if not vagas:
         return {"error": "Nenhuma vaga encontrada."}
 
-    # 🔵 Salva no cache por 1 hora
+    # Salva no cache por 1 hora
     cache.set(cache_key, str(vagas), ex=3600)
 
     return {"source": "live", "data": vagas}
