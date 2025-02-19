@@ -62,11 +62,11 @@ def buscar_vagas(termo: str, localizacao: str = ""):
 
             for vaga in novas_vagas:
                 # 🔹 Converte a data para um formato comparável
-                data_atualizacao = vaga.get("updated", "Data não informada")
+                data_atualizacao = vaga.get("updated", "")
 
                 try:
-                    # Converte a string da data para um objeto datetime
-                    data_formatada = datetime.strptime(data_atualizacao, "%Y-%m-%dT%H:%M:%S") if "T" in data_atualizacao else None
+                    # Tenta converter para o formato correto (Exemplo: "2025-02-19T12:30:00")
+                    data_formatada = datetime.strptime(data_atualizacao, "%Y-%m-%dT%H:%M:%S") if data_atualizacao else None
                 except:
                     data_formatada = None  # Se falhar, assume que a data não está disponível
 
@@ -75,8 +75,8 @@ def buscar_vagas(termo: str, localizacao: str = ""):
                     "empresa": vaga.get("company", "Empresa não informada"),
                     "localizacao": vaga.get("location", "Local não informado"),
                     "salario": vaga.get("salary", "Salário não informado"),
-                    "data_atualizacao": data_atualizacao,
-                    "data_formatada": data_formatada,  # Adicionando para ordenação
+                    "data_atualizacao": data_atualizacao if data_formatada else "Data não informada",
+                    "data_formatada": data_formatada if data_formatada else datetime.min,  # Definir datetime.min se a data for inválida
                     "link": vaga.get("link", "#"),
                     "descricao": vaga.get("snippet", "Descrição não disponível")
                 })
@@ -90,7 +90,7 @@ def buscar_vagas(termo: str, localizacao: str = ""):
         return {"error": "Nenhuma vaga encontrada."}
 
     # 🔵 Ordenar vagas por data (mais recente primeiro)
-    vagas.sort(key=lambda x: x["data_formatada"] or datetime.min, reverse=True)
+    vagas.sort(key=lambda x: x["data_formatada"], reverse=True)
 
     # 🔵 Remove o campo auxiliar "data_formatada" antes de retornar os resultados
     for vaga in vagas:
