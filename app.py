@@ -17,7 +17,7 @@ JOOBLE_API_URL = "https://br.jooble.org/api/"
 # Habilitar CORS corretamente
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],
+    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # Domínio do seu site
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -71,7 +71,4 @@ def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
     # Salva no cache por 1 hora
     cache.set(cache_key, str(vagas), ex=3600)
 
-    # Opcionalmente, retorne também o número total de vagas, se Jooble fornecer. 
-    # A API do Jooble pode retornar algo como data["totalCount"], depende da documentação.
-    # Vou presumir que não temos essa info. Retornamos só as vagas desta página.
     return {"source": "live", "data": vagas}
