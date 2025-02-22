@@ -30,14 +30,15 @@ def home():
     return {"message": "API de busca de vagas está rodando!"}
 
 @app.get("/healthz")
+@app.head("/healthz")  # 🔹 Suporte para requisições HEAD (necessário para o UptimeRobot)
 def health_check():
-    """Rota de Health Check para o Render"""
+    """Rota de Health Check para o Render e monitoramento"""
     return {"status": "ok"}
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
     """Busca vagas de emprego no Jooble e retorna no máximo 15 por página."""
-
+    
     cache_key = f"{termo}_{localizacao}_{pagina}"
     cached_data = cache.get(cache_key)
 
@@ -79,7 +80,7 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
         for vaga in novas_vagas
     ]
 
-    # Salva no cache por 1 hora
+    # Salva no cache por 1 hora para evitar requisições repetidas desnecessárias
     cache.set(cache_key, str(vagas), ex=3600)
 
     return {"source": "live", "data": vagas}
