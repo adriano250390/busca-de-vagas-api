@@ -1,3 +1,4 @@
+import random
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import redis
@@ -14,7 +15,7 @@ cache = redis.from_url(REDIS_URL, decode_responses=True)
 # Configuração do CORS para permitir acesso do frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # 🔹 Substituir pelo domínio real do site
+    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # 🔹 Substituir pelo domínio real do seu site
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -25,30 +26,9 @@ def home():
     """Rota principal da API"""
     return {"message": "API de busca de vagas está rodando!"}
 
-@app.get("/healthz")
-@app.head("/healthz")  # 🔹 Suporte para requisições HEAD (monitoramento)
-def health_check():
-    """Rota de Health Check"""
-    return {"status": "ok"}
-
-# 🔹 ROTA PARA RECEBER AS VAGAS DO INDEED DO FRONTEND (caso seja necessário no futuro)
-@app.post("/coletar-indeed")
-def coletar_vagas_indeed(dados: dict):
-    """Recebe vagas do Indeed capturadas pelo frontend e salva no cache"""
-
-    vagas = dados.get("vagas", [])
-
-    if not vagas:
-        raise HTTPException(status_code=400, detail="Nenhuma vaga recebida")
-
-    # 🔹 Criar chave de cache para armazenar as vagas
-    cache.set("vagas_indeed", str(vagas), ex=3600)  # Cache por 1 hora
-
-    return {"message": "✅ Vagas do Indeed salvas com sucesso!", "total_vagas": len(vagas)}
-
 @app.get("/buscar-indeed")
 async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
-    """Busca vagas no Indeed via scraping e retorna JSON"""
+    """Busca vagas no Indeed usando proxy rotativo"""
 
     cache_key = f"indeed_{termo}_{localizacao}"
     cached_data = cache.get(cache_key)
@@ -58,22 +38,30 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
 
     url = f"https://br.indeed.com/jobs?q={termo}&l={localizacao}"
 
+    # 🔹 Lista de proxies gratuitos (troque por um serviço pago se necessário)
+    proxies = [
+        "http://185.199.229.156:7492",
+        "http://178.128.122.42:3128",
+        "http://64.225.8.192:7497"
+    ]
+    proxy = random.choice(proxies)  # Escolher um proxy aleatório
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, proxies={"http": proxy, "https": proxy}) as client:
         try:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
-            html = response.text  # Pegamos o HTML da página
+            html = response.text
 
-            # 🔹 Usando BeautifulSoup para extrair as vagas
+            from bs4 import BeautifulSoup
             soup = BeautifulSoup(html, "html.parser")
             vagas = []
 
             elementos_vagas = soup.find_all("div", class_="job_seen_beacon")
-            for vaga in elementos_vagas[:15]:  # Pegamos as 15 primeiras
+            for vaga in elementos_vagas[:15]:
                 titulo = vaga.find("h2").get_text(strip=True) if vaga.find("h2") else "Sem título"
                 empresa = vaga.find("span", class_="companyName").get_text(strip=True) if vaga.find("span", class_="companyName") else "Empresa não informada"
                 local = vaga.find("div", class_="companyLocation").get_text(strip=True) if vaga.find("div", class_="companyLocation") else "Local não informado"
@@ -86,7 +74,7 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
                     "link": link
                 })
 
-            # 🔹 Armazena no cache para evitar chamadas repetidas
+            # 🔹 Salvar no cache para evitar chamadas repetidas
             cache.set(cache_key, str(vagas), ex=3600)
 
             return {"source": "live", "vagas": vagas}
