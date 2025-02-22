@@ -1,10 +1,9 @@
-import random
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 import redis
 import os
-import httpx
-from bs4 import BeautifulSoup
+import asyncio
 
 app = FastAPI()
 
@@ -12,80 +11,76 @@ app = FastAPI()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
 
-# Configuração do CORS para permitir acesso do frontend
+# Configuração da API Jooble
+JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
+JOOBLE_API_URL = "https://br.jooble.org/api/"
+
+# Habilitar CORS corretamente
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # 🔹 Substituir pelo domínio real do site
+    allow_origins=["https://gray-termite-250383.hostingersite.com"],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 @app.get("/")
-@app.head("/")  # 🔹 Adicionado suporte para HEAD
 def home():
     """Rota principal da API"""
     return {"message": "API de busca de vagas está rodando!"}
 
 @app.get("/healthz")
-@app.head("/healthz")  # 🔹 Suporte para requisições HEAD (necessário para o Render)
+@app.head("/healthz")  # 🔹 Suporte para requisições HEAD (necessário para o UptimeRobot)
 def health_check():
-    """Rota de Health Check para o Render"""
+    """Rota de Health Check para o Render e monitoramento"""
     return {"status": "ok"}
 
-@app.get("/buscar-indeed")
-async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
-    """Busca vagas no Indeed usando proxy rotativo"""
-
-    cache_key = f"indeed_{termo}_{localizacao}"
+@app.get("/buscar")
+async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
+    """Busca vagas de emprego no Jooble e retorna no máximo 15 por página."""
+    
+    cache_key = f"{termo}_{localizacao}_{pagina}"
     cached_data = cache.get(cache_key)
 
     if cached_data:
-        return {"source": "cache", "vagas": eval(cached_data)}
+        return {"source": "cache", "data": eval(cached_data)}
 
-    url = f"https://br.indeed.com/jobs?q={termo}&l={localizacao}"
-
-    # 🔹 Lista de proxies gratuitos (troque por um serviço pago se necessário)
-    proxies = [
-        "http://185.199.229.156:7492",
-        "http://178.128.122.42:3128",
-        "http://64.225.8.192:7497"
-    ]
-    proxy = random.choice(proxies)  # Escolher um proxy aleatório
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    payload = {
+        "keywords": termo,
+        "location": localizacao,
+        "page": pagina
     }
+    headers = {"Content-Type": "application/json"}
 
-    async with httpx.AsyncClient(timeout=10, proxies={"http://": proxy, "https://": proxy}) as client:
+    async with httpx.AsyncClient(timeout=10) as client:
         try:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            html = response.text
-
-            soup = BeautifulSoup(html, "html.parser")
-            vagas = []
-
-            elementos_vagas = soup.find_all("div", class_="job_seen_beacon")
-            for vaga in elementos_vagas[:15]:
-                titulo = vaga.find("h2").get_text(strip=True) if vaga.find("h2") else "Sem título"
-                empresa = vaga.find("span", class_="companyName").get_text(strip=True) if vaga.find("span", class_="companyName") else "Empresa não informada"
-                local = vaga.find("div", class_="companyLocation").get_text(strip=True) if vaga.find("div", class_="companyLocation") else "Local não informado"
-                link = "https://br.indeed.com" + vaga.find("a")["href"] if vaga.find("a") else "#"
-
-                vagas.append({
-                    "titulo": titulo,
-                    "empresa": empresa,
-                    "localizacao": local,
-                    "link": link
-                })
-
-            # 🔹 Salvar no cache para evitar chamadas repetidas
-            cache.set(cache_key, str(vagas), ex=3600)
-
-            return {"source": "live", "vagas": vagas}
-
+            response = await client.post(f"{JOOBLE_API_URL}{JOOBLE_API_KEY}", json=payload, headers=headers)
+            response.raise_for_status()  # Lança erro caso a API retorne status diferente de 200
+            data = response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"Erro ao acessar o Indeed: {e.response.status_code}"}
-        except Exception as e:
-            return {"error": f"Erro desconhecido: {str(e)}"}
+            return {"error": f"Erro na API Jooble: {e.response.status_code}"}
+        except httpx.RequestError:
+            return {"error": "Erro de conexão com a API Jooble"}
+
+    novas_vagas = data.get("jobs", [])[:15]  # 🔹 Retorna apenas 15 vagas
+
+    if not novas_vagas:
+        return {"error": "Nenhuma vaga encontrada para esta página."}
+
+    vagas = [
+        {
+            "titulo": vaga.get("title", "Sem título"),
+            "empresa": vaga.get("company", "Empresa não informada"),
+            "localizacao": vaga.get("location", "Local não informado"),
+            "salario": vaga.get("salary", "Salário não informado"),
+            "data_atualizacao": vaga.get("updated", "Data não informada"),
+            "link": vaga.get("link", "#"),
+            "descricao": vaga.get("snippet", "Descrição não disponível")
+        }
+        for vaga in novas_vagas
+    ]
+
+    # Salva no cache por 1 hora para evitar requisições repetidas desnecessárias
+    cache.set(cache_key, str(vagas), ex=3600)
+
+    return {"source": "live", "data": vagas}
