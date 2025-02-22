@@ -15,16 +15,23 @@ cache = redis.from_url(REDIS_URL, decode_responses=True)
 # Configuração do CORS para permitir acesso do frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # 🔹 Substituir pelo domínio real do seu site
+    allow_origins=["https://gray-termite-250383.hostingersite.com"],  # 🔹 Substituir pelo domínio real do site
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 @app.get("/")
+@app.head("/")  # 🔹 Adicionado suporte para HEAD
 def home():
     """Rota principal da API"""
     return {"message": "API de busca de vagas está rodando!"}
+
+@app.get("/healthz")
+@app.head("/healthz")  # 🔹 Suporte para requisições HEAD (necessário para o Render)
+def health_check():
+    """Rota de Health Check para o Render"""
+    return {"status": "ok"}
 
 @app.get("/buscar-indeed")
 async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
