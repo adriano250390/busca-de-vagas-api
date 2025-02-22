@@ -26,11 +26,17 @@ app.add_middleware(
 
 @app.get("/")
 def home():
+    """Rota principal da API"""
     return {"message": "API de busca de vagas está rodando!"}
+
+@app.get("/healthz")
+def health_check():
+    """Rota de Health Check para o Render"""
+    return {"status": "ok"}
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
-    """Busca vagas de emprego no Jooble e retorna somente 15 vagas por página."""
+    """Busca vagas de emprego no Jooble e retorna no máximo 15 por página."""
 
     cache_key = f"{termo}_{localizacao}_{pagina}"
     cached_data = cache.get(cache_key)
