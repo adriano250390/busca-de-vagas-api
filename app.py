@@ -57,9 +57,7 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    transport = httpx.HTTPTransport(proxy=proxy)  # Configurando proxy corretamente
-
-    async with httpx.AsyncClient(timeout=10, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=10, proxies={"http://": proxy, "https://": proxy}) as client:
         try:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
