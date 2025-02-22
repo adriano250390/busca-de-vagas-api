@@ -70,7 +70,7 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
         "include_errors": "true",
         "type": "discover_new",
         "discover_by": "keyword",
-        "limit_per_input": "5"
+        "limit_per_input": 5  # Alterado para inteiro
     }
     bright_data_payload = [{
         "country": "US",
@@ -86,7 +86,7 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"Erro na API Bright Data: {e.response.status_code}"}
+            return {"error": f"Erro na API Bright Data: {e.response.status_code}", "detalhes": response.text}
         except httpx.RequestError:
             return {"error": "Erro de conexão com a API Bright Data"}
     vagas_indeed = data.get("results", [])[:5]  # Pegamos no máximo 5 vagas do Indeed
