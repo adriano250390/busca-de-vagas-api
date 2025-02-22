@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import httpx
 import redis
 import os
 import asyncio
@@ -14,10 +13,6 @@ app = FastAPI()
 # Configuração do Redis (Cache)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
-
-# Configuração das APIs
-JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
-JOOBLE_API_URL = "https://br.jooble.org/api/"
 
 # Habilitar CORS corretamente
 app.add_middleware(
@@ -36,7 +31,7 @@ def iniciar_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    
+
     driver = webdriver.Chrome(options=chrome_options)
     return driver
 
@@ -50,51 +45,6 @@ def home():
 def health_check():
     """Rota de Health Check"""
     return {"status": "ok"}
-
-async def buscar_vagas_jooble(termo: str, localizacao: str = "", pagina: int = 1):
-    """Busca vagas na API do Jooble"""
-    
-    cache_key = f"jooble_{termo}_{localizacao}_{pagina}"
-    cached_data = cache.get(cache_key)
-
-    if cached_data:
-        return eval(cached_data)
-
-    payload = {
-        "keywords": termo,
-        "location": localizacao,
-        "page": pagina
-    }
-    headers = {"Content-Type": "application/json"}
-
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            response = await client.post(f"{JOOBLE_API_URL}{JOOBLE_API_KEY}", json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-        except httpx.HTTPStatusError as e:
-            return {"error": f"Erro na API Jooble: {e.response.status_code}"}
-        except httpx.RequestError:
-            return {"error": "Erro de conexão com a API Jooble"}
-
-    vagas = [
-        {
-            "titulo": vaga.get("title", "Sem título"),
-            "empresa": vaga.get("company", "Empresa não informada"),
-            "localizacao": vaga.get("location", "Local não informado"),
-            "salario": vaga.get("salary", "Salário não informado"),
-            "data_atualizacao": vaga.get("updated", "Data não informada"),
-            "link": vaga.get("link", "#"),
-            "descricao": vaga.get("snippet", "Descrição não disponível"),
-            "fonte": "jooble"  # 🔹 Adiciona a fonte da vaga
-        }
-        for vaga in data.get("jobs", [])[:15]  # 🔹 Retorna apenas 15 vagas
-    ]
-
-    # Salva no cache por 1 hora
-    cache.set(cache_key, str(vagas), ex=3600)
-
-    return vagas
 
 async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
     """Scraping de vagas no Indeed"""
@@ -146,15 +96,13 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
-    """Busca vagas de emprego no Jooble e no Indeed"""
+    """Busca vagas apenas no Indeed (temporariamente, sem Jooble)"""
 
-    # Buscar vagas das duas fontes em paralelo
-    jooble_vagas, indeed_vagas = await asyncio.gather(
-        buscar_vagas_jooble(termo, localizacao, pagina),
-        buscar_vagas_indeed(termo, localizacao)
-    )
+    # 🔹 Apenas buscando vagas no Indeed por enquanto
+    indeed_vagas = await buscar_vagas_indeed(termo, localizacao)
 
-    # Unir os resultados
-    todas_vagas = jooble_vagas + indeed_vagas
+    # 🔹 Jooble comentado temporariamente
+    # jooble_vagas = await buscar_vagas_jooble(termo, localizacao, pagina)
 
-    return {"source": "combined", "data": todas_vagas}
+    # 🔹 Apenas retornando vagas do Indeed para teste
+    return {"source": "indeed_only", "data": indeed_vagas}
