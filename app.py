@@ -7,28 +7,28 @@ import asyncio
 
 app = FastAPI()
 
-# -------------------------
-# Configuração do Redis (Cache)
-# -------------------------
+# -----------------------------------------------------------------------------
+# Configuração do Redis (se quiser manter o cache; pode remover se não usar)
+# -----------------------------------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
 
-# -------------------------
-# Chaves comentadas, caso não queira usá-las agora
-# (somente se realmente não for usar Jooble por enquanto)
-# JOOBLE_API_KEY = "xxx"
+# -----------------------------------------------------------------------------
+# **Jooble** está comentado (pois queremos testar apenas Bright Data)
+# -----------------------------------------------------------------------------
+# JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
 # JOOBLE_API_URL = "https://br.jooble.org/api/"
 
-# -------------------------
+# -----------------------------------------------------------------------------
 # Configuração da Bright Data (para Indeed)
-# -------------------------
+# -----------------------------------------------------------------------------
 BRIGHTDATA_URL = "https://api.brightdata.com/datasets/v3/trigger"
 BRIGHTDATA_TOKEN = "Bearer 1d3cf9f7dd24acb0109d558a667720ffdeecbb0a64c305d08bfee5b4f86e8436"
 BRIGHTDATA_DATASET_ID = "gd_l4dx9j9sscpvs7no2"
 
-# -------------------------
+# -----------------------------------------------------------------------------
 # Habilitar CORS
-# -------------------------
+# -----------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://gray-termite-250383.hostingersite.com"],
@@ -37,63 +37,82 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -------------------------
+# -----------------------------------------------------------------------------
+# Função auxiliar para escolher domain/country com base na localização
+# -----------------------------------------------------------------------------
+def escolher_domain_e_pais(localizacao: str):
+    """
+    Exemplo BEM simples de correspondência:
+      - Se contiver 'paris' -> (FR, fr.indeed.com)
+      - Se contiver 'new york' ou 'usa' -> (US, indeed.com)
+      - Se contiver 'brasil', 'são paulo', etc. -> (BR, br.indeed.com)
+      - Senão, default = (US, indeed.com)
+    Ajuste conforme seu dataset real. Se BrightData não aceita BR, retire a parte BR.
+    """
+    loc = localizacao.lower()
+
+    if "paris" in loc or "france" in loc:
+        return ("FR", "fr.indeed.com")
+    elif "new york" in loc or "usa" in loc or "united states" in loc:
+        return ("US", "indeed.com")
+    elif "brasil" in loc or "são paulo" in loc or "rio de janeiro" in loc or "brazil" in loc:
+        return ("BR", "br.indeed.com")
+    else:
+        # Default
+        return ("US", "indeed.com")
+
+# -----------------------------------------------------------------------------
 # Rotas básicas
-# -------------------------
+# -----------------------------------------------------------------------------
 @app.get("/")
 def home():
-    return {"message": "API rodando - teste do Indeed!"}
+    return {"message": "API rodando - Apenas Bright Data (Indeed)"}
 
 @app.get("/healthz")
 @app.head("/healthz")
 def health_check():
     return {"status": "ok"}
 
-# -------------------------
-# Rota unificada (mas Jooble está desativado)
-# -------------------------
+# -----------------------------------------------------------------------------
+# Rota /buscar - SÓ Bright Data (Indeed)
+# -----------------------------------------------------------------------------
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = ""):
     """
-    Exemplo que busca vagas *somente* no Indeed (via Bright Data), para testar.
+    Testa somente a Bright Data (Indeed). Jooble está comentado.
     """
 
-    # -- Monta chave de cache, caso queira
-    indeed_cache_key = f"indeed_{termo}_{localizacao}"
+    # -- Exemplo simples: usar a função auxiliar p/ domain e country
+    country_code, domain = escolher_domain_e_pais(localizacao)
 
-    # -- Verifica cache (opcional)
-    cached_data = cache.get(indeed_cache_key)
+    # -- Monta chave de cache (opcional)
+    cache_key = f"indeed_{termo}_{localizacao}"
+
+    # -- Tenta cache
+    cached_data = cache.get(cache_key)
     if cached_data:
-        return {
-            "source": "cache",
-            "data": eval(cached_data),
-        }
+        return {"source": "cache", "data": eval(cached_data)}
 
-    # ---------------------------------------
-    # LÓGICA DO JOOBLE (COMENTADA/REMOVIDA)
-    # ---------------------------------------
-    # # payload_jooble = {...}
-    # # headers_jooble = {...}
-    # # (não vamos chamar o Jooble agora)
-
-    # ---------------------------------------
-    # Chamar a API do Bright Data (Indeed)
-    # ---------------------------------------
-    headers_bd = {
+    # -----------------------
+    # Parâmetros Bright Data
+    # -----------------------
+    headers = {
         "Authorization": BRIGHTDATA_TOKEN,
         "Content-Type": "application/json",
     }
-    params_bd = {
+    params = {
         "dataset_id": BRIGHTDATA_DATASET_ID,
         "include_errors": "true",
         "type": "discover_new",
         "discover_by": "keyword",
-        "limit_per_input": "6",  # Ajuste conforme necessário
+        "limit_per_input": "6",
     }
+
+    # data_posted pode ser "Last 7 days", "Last 24 hours", etc.
     data_bd = [
         {
-            "country": "US",
-            "domain": "indeed.com",
+            "country": country_code,
+            "domain": domain,
             "keyword_search": termo,
             "location": localizacao,
             "date_posted": "Last 7 days",
@@ -101,43 +120,39 @@ async def buscar_vagas(termo: str, localizacao: str = ""):
         }
     ]
 
+    # Faz a requisição
     async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            indeed_resp = await client.post(
-                BRIGHTDATA_URL,
-                headers=headers_bd,
-                params=params_bd,
-                json=data_bd
-            )
-            indeed_resp.raise_for_status()
-            indeed_data = indeed_resp.json()
-        except httpx.HTTPError as e:
-            return {"error": f"Erro ao chamar Bright Data: {str(e)}"}
+        resp = await client.post(BRIGHTDATA_URL, headers=headers, params=params, json=data_bd)
 
-    # ---------------------------------------
-    # AVISO: Normalmente brightdata retorna só o "gatilho" (trigger)
-    # e não as vagas em si. Se esse for o caso, esse 'indeed_data'
-    # pode conter algo como { "request_id": "...", ... }.
-    #
-    # Se você precisar de fato das vagas, tem que fazer a 2a requisição
-    # usando esse request_id. Aqui vamos só retornar o que vier.
-    # ---------------------------------------
+    # Se não for 200, retorna erro e mostra o corpo de resposta p/ diagnosticar
+    if resp.status_code != 200:
+        return {
+            "error": f"HTTP {resp.status_code} na chamada Bright Data",
+            "detail": resp.text  # Isso ajuda ver a msg de erro exata
+        }
 
-    # Se fosse processar de verdade as vagas, você formataria algo como:
-    #   indeed_vagas = [
-    #       {
-    #         "titulo": item.get("title", "Sem título"),
-    #         "empresa": item.get("company", "Empresa não informada"),
-    #         "fonte": "Indeed"
-    #       } for item in indeed_data.get("jobs", [])
-    #   ]
-    #   etc...
-    # Mas, por enquanto, só retornamos o JSON puro:
+    # Se deu certo, pegue o JSON
+    result = resp.json()
 
-    # Salvar no cache
-    cache.set(indeed_cache_key, str(indeed_data), ex=3600)
+    # IMPORTANTE: Normalmente aqui só temos o "gatilho" (trigger).
+    # Se você PRECISA de fato das vagas, tem que consultar o request_id
+    # em outro endpoint. Por ora, vamos só retornar o que vier.
+    cache.set(cache_key, str(result), ex=3600)
 
     return {
         "source": "live",
-        "data": indeed_data,
+        "data": result
     }
+
+# -----------------------------------------------------------------------------
+# (COMENTADO) Código do Jooble
+# -----------------------------------------------------------------------------
+"""
+# Aqui estaria toda a lógica do Jooble caso quisesse reativar depois:
+
+# @app.get("/buscar_jooble")
+# async def buscar_vagas_jooble(termo: str, localizacao: str = "", pagina: int = 1):
+#     # ...
+#     # ...
+#     return ...
+"""
