@@ -2,11 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import redis
 import os
-import asyncio
+import time
+import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-import time
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 app = FastAPI()
 
@@ -31,6 +33,14 @@ def iniciar_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
+    
+    # 🔹 Adicionando um User-Agent aleatório
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.198 Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.135 Mobile Safari/537.36"
+    ]
+    chrome_options.add_argument(f"user-agent={random.choice(user_agents)}")
 
     driver = webdriver.Chrome(options=chrome_options)
     return driver
@@ -41,12 +51,12 @@ def home():
     return {"message": "API de busca de vagas está rodando!"}
 
 @app.get("/healthz")
-@app.head("/healthz")  # 🔹 Suporte para requisições HEAD
+@app.head("/healthz")
 def health_check():
     """Rota de Health Check"""
     return {"status": "ok"}
 
-async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
+def buscar_vagas_indeed(termo: str, localizacao: str = ""):
     """Scraping de vagas no Indeed"""
 
     cache_key = f"indeed_{termo}_{localizacao}"
@@ -60,11 +70,14 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
     url = f"https://br.indeed.com/jobs?q={termo}&l={localizacao}"
     driver.get(url)
 
-    time.sleep(5)  # Esperar a página carregar
-
-    vagas = []
-
     try:
+        # 🔹 Espera explícita para garantir que os elementos carreguem
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "job_seen_beacon"))
+        )
+        time.sleep(random.uniform(2, 4))  # 🔹 Pequeno delay randômico
+
+        vagas = []
         elementos_vagas = driver.find_elements(By.CLASS_NAME, "job_seen_beacon")
 
         for vaga in elementos_vagas[:15]:  # Pegar só as 15 primeiras
@@ -79,13 +92,14 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
                     "empresa": empresa,
                     "localizacao": local,
                     "link": link,
-                    "fonte": "indeed"  # 🔹 Adiciona a fonte da vaga
+                    "fonte": "indeed"
                 })
             except Exception as e:
                 print(f"Erro ao capturar vaga: {e}")
 
     except Exception as e:
         print(f"Erro ao buscar vagas no Indeed: {e}")
+        vagas = []
 
     driver.quit()
 
@@ -95,14 +109,9 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
     return vagas
 
 @app.get("/buscar")
-async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
+def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
     """Busca vagas apenas no Indeed (temporariamente, sem Jooble)"""
 
-    # 🔹 Apenas buscando vagas no Indeed por enquanto
-    indeed_vagas = await buscar_vagas_indeed(termo, localizacao)
+    indeed_vagas = buscar_vagas_indeed(termo, localizacao)
 
-    # 🔹 Jooble comentado temporariamente
-    # jooble_vagas = await buscar_vagas_jooble(termo, localizacao, pagina)
-
-    # 🔹 Apenas retornando vagas do Indeed para teste
     return {"source": "indeed_only", "data": indeed_vagas}
