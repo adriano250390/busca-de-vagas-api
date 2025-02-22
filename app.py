@@ -85,7 +85,8 @@ async def buscar_vagas_jooble(termo: str, localizacao: str = "", pagina: int = 1
             "salario": vaga.get("salary", "Salário não informado"),
             "data_atualizacao": vaga.get("updated", "Data não informada"),
             "link": vaga.get("link", "#"),
-            "descricao": vaga.get("snippet", "Descrição não disponível")
+            "descricao": vaga.get("snippet", "Descrição não disponível"),
+            "fonte": "jooble"  # 🔹 Adiciona a fonte da vaga
         }
         for vaga in data.get("jobs", [])[:15]  # 🔹 Retorna apenas 15 vagas
     ]
@@ -127,7 +128,8 @@ async def buscar_vagas_indeed(termo: str, localizacao: str = ""):
                     "titulo": titulo,
                     "empresa": empresa,
                     "localizacao": local,
-                    "link": link
+                    "link": link,
+                    "fonte": "indeed"  # 🔹 Adiciona a fonte da vaga
                 })
             except Exception as e:
                 print(f"Erro ao capturar vaga: {e}")
