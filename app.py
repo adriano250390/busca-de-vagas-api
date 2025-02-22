@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import httpx  # Alterando para uma requisição assíncrona
+import httpx
 import redis
 import os
-import asyncio  # Adicionando para assíncrona
+import asyncio
 
 app = FastAPI()
 
@@ -30,11 +30,11 @@ def home():
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
-    """Busca vagas de emprego no Jooble e retorna somente uma página de resultados."""
-    
+    """Busca vagas de emprego no Jooble e retorna somente 15 vagas por página."""
+
     cache_key = f"{termo}_{localizacao}_{pagina}"
     cached_data = cache.get(cache_key)
-    
+
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
@@ -54,8 +54,8 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
             return {"error": f"Erro na API Jooble: {e.response.status_code}"}
         except httpx.RequestError:
             return {"error": "Erro de conexão com a API Jooble"}
-    
-    novas_vagas = data.get("jobs", [])
+
+    novas_vagas = data.get("jobs", [])[:15]  # 🔹 Retorna apenas 15 vagas
 
     if not novas_vagas:
         return {"error": "Nenhuma vaga encontrada para esta página."}
