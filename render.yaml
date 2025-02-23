@@ -2,12 +2,15 @@ services:
   - type: web
     name: busca-de-vagas-api
     env: python
+    runtime: python311
     buildCommand: |
-      python --version  # 🔹 Exibe a versão do Python no log
       pip install --upgrade pip
-      pip install -r requirements.txt --no-cache-dir
-      pip install jobspy --no-cache-dir
-    startCommand: "bash start.sh"
+      pip install --no-cache-dir -r requirements.txt
+      pip install --no-cache-dir jobspy  # 🔹 Instalação manual para garantir que o pacote esteja presente
+    startCommand: |
+      python -m pip install jobspy --no-cache-dir  # 🔹 Reinstala diretamente antes de iniciar
+      python -c "import jobspy; print('JobSpy importado com sucesso!')"  # 🔹 Testa a importação
+      uvicorn app:app --host 0.0.0.0 --port 8000
     plan: free
     envVars:
       - key: REDIS_URL
