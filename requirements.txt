@@ -2,10 +2,7 @@ fastapi
 uvicorn
 requests
 redis
-beautifulsoup4
 httpx
-selenium
-webdriver-manager
 pydantic
 python-multipart
 jobspy
