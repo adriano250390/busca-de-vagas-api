@@ -2,11 +2,11 @@ services:
   - type: web
     name: busca-de-vagas-api
     env: python
-    runtime: python310  # 🔹 Isso força o uso do Python 3.10+
     buildCommand: |
-      pip install --upgrade pip  # 🔹 Atualiza o Pip
-      pip install -r requirements.txt --no-cache-dir  # 🔹 Instala dependências corretamente
-      pip install jobspy --no-cache-dir  # 🔹 Garante a instalação do JobSpy
+      python --version  # 🔹 Exibe a versão do Python no log
+      pip install --upgrade pip
+      pip install -r requirements.txt --no-cache-dir
+      pip install jobspy --no-cache-dir
     startCommand: "bash start.sh"
     plan: free
     envVars:
