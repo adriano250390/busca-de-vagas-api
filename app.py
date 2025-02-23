@@ -7,13 +7,17 @@ import asyncio
 
 app = FastAPI()
 
-# Configuração do Redis (Cache)
+# Configuração do Redis (Cache) - Cache por 6 horas (21600 segundos)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
 
 # Configuração da API Jooble
 JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
 JOOBLE_API_URL = "https://br.jooble.org/api/"
+
+# Configuração da API do Indeed Scraper (Apify)
+APIFY_API_TOKEN = "apify_api_JPdMIJwlO6TJZbubU2UUrkIZcqjUcU4zjtX1"
+APIFY_DATASET_ID = "7WlZplTf3Y0TNTQY3"
 
 # Habilitar CORS corretamente
 app.add_middleware(
@@ -30,44 +34,29 @@ def home():
     return {"message": "API de busca de vagas está rodando!"}
 
 @app.get("/healthz")
-@app.head("/healthz")  # 🔹 Suporte para requisições HEAD (necessário para o UptimeRobot)
+@app.head("/healthz")  
 def health_check():
-    """Rota de Health Check para o Render e monitoramento"""
+    """Rota de Health Check para monitoramento"""
     return {"status": "ok"}
 
-@app.get("/buscar")
-async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
-    """Busca vagas de emprego no Jooble e retorna no máximo 15 por página."""
-    
-    cache_key = f"{termo}_{localizacao}_{pagina}"
-    cached_data = cache.get(cache_key)
-
-    if cached_data:
-        return {"source": "cache", "data": eval(cached_data)}
-
-    payload = {
-        "keywords": termo,
-        "location": localizacao,
-        "page": pagina
-    }
+async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
+    """Busca vagas no Jooble"""
+    payload = {"keywords": termo, "location": localizacao, "page": pagina}
     headers = {"Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=10) as client:
         try:
             response = await client.post(f"{JOOBLE_API_URL}{JOOBLE_API_KEY}", json=payload, headers=headers)
-            response.raise_for_status()  # Lança erro caso a API retorne status diferente de 200
+            response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
             return {"error": f"Erro na API Jooble: {e.response.status_code}"}
         except httpx.RequestError:
             return {"error": "Erro de conexão com a API Jooble"}
 
-    novas_vagas = data.get("jobs", [])[:15]  # 🔹 Retorna apenas 15 vagas
+    novas_vagas = data.get("jobs", [])[:15]  # Retorna no máximo 15 vagas do Jooble
 
-    if not novas_vagas:
-        return {"error": "Nenhuma vaga encontrada para esta página."}
-
-    vagas = [
+    return [
         {
             "titulo": vaga.get("title", "Sem título"),
             "empresa": vaga.get("company", "Empresa não informada"),
@@ -75,12 +64,67 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
             "salario": vaga.get("salary", "Salário não informado"),
             "data_atualizacao": vaga.get("updated", "Data não informada"),
             "link": vaga.get("link", "#"),
-            "descricao": vaga.get("snippet", "Descrição não disponível")
+            "descricao": vaga.get("snippet", "Descrição não disponível"),
+            "source": "Jooble"
         }
         for vaga in novas_vagas
     ]
 
-    # Salva no cache por 1 hora para evitar requisições repetidas desnecessárias
-    cache.set(cache_key, str(vagas), ex=3600)
+async def buscar_vagas_indeed(termo: str, localizacao: str):
+    """Busca vagas no Indeed Scraper da Apify e limita a 5 resultados"""
+    url = f"https://api.apify.com/v2/datasets/{APIFY_DATASET_ID}/items?token={APIFY_API_TOKEN}"
+    
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Erro na API Apify: {e.response.status_code}"}
+        except httpx.RequestError:
+            return {"error": "Erro de conexão com a API Apify"}
 
-    return {"source": "live", "data": vagas}
+    # Filtra apenas vagas que contenham o termo buscado
+    novas_vagas = [vaga for vaga in data if termo.lower() in vaga.get("title", "").lower()]
+
+    return [
+        {
+            "titulo": vaga.get("title", "Sem título"),
+            "empresa": vaga.get("company", "Empresa não informada"),
+            "localizacao": vaga.get("location", "Local não informado"),
+            "salario": "Salário não informado",
+            "data_atualizacao": vaga.get("date", "Data não informada"),
+            "link": vaga.get("url", "#"),
+            "descricao": vaga.get("description", "Descrição não disponível"),
+            "source": "Indeed"
+        }
+        for vaga in novas_vagas[:5]  # Retorna no máximo 5 vagas do Indeed
+    ]
+
+@app.get("/buscar")
+async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
+    """Busca vagas no Jooble e Indeed, combinando os resultados"""
+    
+    cache_key = f"{termo}_{localizacao}_{pagina}"
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        return {"source": "cache", "data": eval(cached_data)}
+
+    # Buscar as vagas de ambas as APIs de forma assíncrona
+    jooble_task = buscar_vagas_jooble(termo, localizacao, pagina)
+    indeed_task = buscar_vagas_indeed(termo, localizacao)
+    
+    jooble_vagas, indeed_vagas = await asyncio.gather(jooble_task, indeed_task)
+
+    # Garantir que os 5 primeiros resultados sejam do Indeed
+    vagas_combinadas = (indeed_vagas or []) + (jooble_vagas or [])
+    vagas_combinadas = vagas_combinadas[:20]  # Retorna no máximo 20 vagas
+
+    if not vagas_combinadas:
+        return {"error": "Nenhuma vaga encontrada."}
+
+    # Salva no cache por 6 horas (21600 segundos)
+    cache.set(cache_key, str(vagas_combinadas), ex=21600)
+
+    return {"source": "live", "data": vagas_combinadas}
