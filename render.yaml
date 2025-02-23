@@ -2,6 +2,7 @@ services:
   - type: web
     name: busca-de-vagas-api
     env: python
+    runtime: python3.11  # 🔥 Força o uso de Python 3.11
     buildCommand: "pip install -r requirements.txt"
     startCommand: "bash start.sh"
     plan: free
