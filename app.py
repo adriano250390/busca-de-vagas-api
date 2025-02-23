@@ -18,7 +18,7 @@ JOOBLE_API_URL = "https://br.jooble.org/api/"
 
 # Configuração da API do Indeed Scraper (Apify)
 APIFY_API_TOKEN = "apify_api_JPdMIJwlO6TJZbubU2UUrkIZcqjUcU4zjtX1"
-APIFY_DATASET_ID = "7WlZplTf3Y0TNTQY3"
+APIFY_ACTOR_ID = "hMvMvNSpz3JhHgl5jkh"  # ID do scraper na Apify
 
 # Habilitar CORS corretamente
 app.add_middleware(
@@ -39,6 +39,31 @@ def home():
 def health_check():
     """Rota de Health Check para monitoramento"""
     return {"status": "ok"}
+
+async def iniciar_scraper_indeed(termo: str, localizacao: str):
+    """Executa o scraper do Indeed na Apify com os parâmetros fornecidos"""
+    url = f"https://api.apify.com/v2/actor-runs?token={APIFY_API_TOKEN}"
+    payload = {
+        "actorId": APIFY_ACTOR_ID,
+        "runInput": {
+            "country": "BR",
+            "location": localizacao,
+            "maxItems": 5,  # Limitar para 5 resultados
+            "parseCompanyDetails": False
+        }
+    }
+    
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            run_data = response.json()
+            run_id = run_data.get("data", {}).get("id")
+            return run_id
+        except httpx.HTTPStatusError as e:
+            return {"error": f"Erro ao iniciar o scraper na Apify: {e.response.status_code}"}
+        except httpx.RequestError:
+            return {"error": "Erro de conexão com a API Apify"}
 
 async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
     """Busca vagas no Jooble"""
@@ -71,63 +96,33 @@ async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
         for vaga in novas_vagas
     ]
 
-async def buscar_vagas_indeed(termo: str, localizacao: str):
-    """Busca vagas no Indeed Scraper da Apify respeitando cargo e cidade"""
-    url = f"https://api.apify.com/v2/datasets/{APIFY_DATASET_ID}/items?token={APIFY_API_TOKEN}"
+async def buscar_vagas_indeed(run_id: str):
+    """Busca os resultados do scraper do Indeed na Apify"""
+    url = f"https://api.apify.com/v2/actor-runs/{run_id}/dataset/items?token={APIFY_API_TOKEN}"
     
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
             response = await client.get(url)
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"Erro na API Apify: {e.response.status_code}"}
+            return {"error": f"Erro ao buscar dados na Apify: {e.response.status_code}"}
         except httpx.RequestError:
             return {"error": "Erro de conexão com a API Apify"}
 
-    # Definir datas para filtrar as vagas mais recentes
-    hoje = datetime.today().date()
-    ontem = hoje - timedelta(days=1)
-
-    vagas_filtradas = []
-    
-    for vaga in data:
-        titulo_vaga = vaga.get("title", "").lower()
-        cidade_vaga = vaga.get("location", "").lower()
-
-        # Filtrar por cargo
-        if termo.lower() not in titulo_vaga:
-            continue
-
-        # Filtrar por cidade (se informada)
-        if localizacao and localizacao.lower() not in cidade_vaga:
-            continue
-
-        # Pegar e validar a data de publicação
-        data_pub = vaga.get("date", "")
-
-        try:
-            data_pub = datetime.strptime(data_pub, "%Y-%m-%d").date()  # Converter string para data
-        except ValueError:
-            continue  # Ignora vagas sem data válida
-
-        # Filtrar apenas as vagas de hoje ou de ontem
-        if data_pub < ontem:
-            continue
-
-        # Adicionar vaga filtrada à lista
-        vagas_filtradas.append({
+    return [
+        {
             "titulo": vaga.get("title", "Sem título"),
             "empresa": vaga.get("company", "Empresa não informada"),
             "localizacao": vaga.get("location", "Local não informado"),
             "salario": "Salário não informado",
-            "data_atualizacao": data_pub.strftime("%d/%m/%Y"),  # Formato BR: dd/mm/yyyy
+            "data_atualizacao": vaga.get("date", "Data não informada"),
             "link": vaga.get("url", "#"),
             "descricao": vaga.get("description", "Descrição não disponível"),
             "source": "Indeed"
-        })
-
-    return vagas_filtradas[:5]  # Retorna no máximo 5 vagas do Indeed
+        }
+        for vaga in data[:5]  # Retorna no máximo 5 vagas do Indeed
+    ]
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
@@ -139,10 +134,17 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
+    # Iniciar o scraper do Indeed dinamicamente
+    run_id = await iniciar_scraper_indeed(termo, localizacao)
+    
+    # Se houve erro ao iniciar o scraper, retorna erro
+    if isinstance(run_id, dict) and "error" in run_id:
+        return run_id
+
     # Buscar as vagas de ambas as APIs de forma assíncrona
     jooble_task = buscar_vagas_jooble(termo, localizacao, pagina)
-    indeed_task = buscar_vagas_indeed(termo, localizacao)
-    
+    indeed_task = buscar_vagas_indeed(run_id)
+
     jooble_vagas, indeed_vagas = await asyncio.gather(jooble_task, indeed_task)
 
     # Garantir que os 5 primeiros resultados sejam do Indeed
