@@ -5,4 +5,4 @@ redis
 httpx
 pydantic
 python-multipart
-jobspy
+jobspy==1.1.77
