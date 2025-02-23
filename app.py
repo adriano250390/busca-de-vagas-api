@@ -4,6 +4,7 @@ import httpx
 import redis
 import os
 import asyncio
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -34,7 +35,7 @@ def home():
     return {"message": "API de busca de vagas está rodando!"}
 
 @app.get("/healthz")
-@app.head("/healthz")  
+@app.head("/healthz")
 def health_check():
     """Rota de Health Check para monitoramento"""
     return {"status": "ok"}
@@ -71,7 +72,7 @@ async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
     ]
 
 async def buscar_vagas_indeed(termo: str, localizacao: str):
-    """Busca vagas no Indeed Scraper da Apify e limita a 5 resultados"""
+    """Busca vagas no Indeed Scraper da Apify respeitando cargo e cidade"""
     url = f"https://api.apify.com/v2/datasets/{APIFY_DATASET_ID}/items?token={APIFY_API_TOKEN}"
     
     async with httpx.AsyncClient(timeout=10) as client:
@@ -84,22 +85,49 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
         except httpx.RequestError:
             return {"error": "Erro de conexão com a API Apify"}
 
-    # Filtra apenas vagas que contenham o termo buscado
-    novas_vagas = [vaga for vaga in data if termo.lower() in vaga.get("title", "").lower()]
+    # Definir datas para filtrar as vagas mais recentes
+    hoje = datetime.today().date()
+    ontem = hoje - timedelta(days=1)
 
-    return [
-        {
+    vagas_filtradas = []
+    
+    for vaga in data:
+        titulo_vaga = vaga.get("title", "").lower()
+        cidade_vaga = vaga.get("location", "").lower()
+
+        # Filtrar por cargo
+        if termo.lower() not in titulo_vaga:
+            continue
+
+        # Filtrar por cidade (se informada)
+        if localizacao and localizacao.lower() not in cidade_vaga:
+            continue
+
+        # Pegar e validar a data de publicação
+        data_pub = vaga.get("date", "")
+
+        try:
+            data_pub = datetime.strptime(data_pub, "%Y-%m-%d").date()  # Converter string para data
+        except ValueError:
+            continue  # Ignora vagas sem data válida
+
+        # Filtrar apenas as vagas de hoje ou de ontem
+        if data_pub < ontem:
+            continue
+
+        # Adicionar vaga filtrada à lista
+        vagas_filtradas.append({
             "titulo": vaga.get("title", "Sem título"),
             "empresa": vaga.get("company", "Empresa não informada"),
             "localizacao": vaga.get("location", "Local não informado"),
             "salario": "Salário não informado",
-            "data_atualizacao": vaga.get("date", "Data não informada"),
+            "data_atualizacao": data_pub.strftime("%d/%m/%Y"),  # Formato BR: dd/mm/yyyy
             "link": vaga.get("url", "#"),
             "descricao": vaga.get("description", "Descrição não disponível"),
             "source": "Indeed"
-        }
-        for vaga in novas_vagas[:5]  # Retorna no máximo 5 vagas do Indeed
-    ]
+        })
+
+    return vagas_filtradas[:5]  # Retorna no máximo 5 vagas do Indeed
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
