@@ -5,7 +5,6 @@ import redis
 import os
 import asyncio
 from datetime import datetime, timedelta
-import time
 
 app = FastAPI()
 
@@ -17,14 +16,14 @@ cache = redis.from_url(REDIS_URL, decode_responses=True)
 JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
 JOOBLE_API_URL = "https://br.jooble.org/api/"
 
-# Configuração da API do Indeed Scraper (Apify)
+# Configuração da API Apify
 APIFY_API_TOKEN = "apify_api_JPdMIJwlO6TJZbubU2UUrkIZcqjUcU4zjtX1"
-APIFY_ACTOR_ID = "hMvMvNSpz3JhHgl5jkh"  # ID do scraper na Apify
+APIFY_ACTOR_ID = "hMvNSpz3JnHgl5jkh"  # ID do scraper na Apify
 
 # Habilitar CORS corretamente
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],
+    allow_origins=["*"],  # Permite qualquer origem (mude para seu domínio se necessário)
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -42,41 +41,48 @@ def health_check():
     return {"status": "ok"}
 
 async def iniciar_scraper_indeed(termo: str, localizacao: str):
-    """Executa o scraper do Indeed na Apify e retorna o run_id"""
-    url = f"https://api.apify.com/v2/actors/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
+    """Inicia o scraper no Apify e retorna o run_id"""
+    url_actors = f"https://api.apify.com/v2/actors/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
+    url_acts = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
+
     payload = {
         "input": {
             "country": "BR",
             "query": termo,
             "location": localizacao,
-            "maxItems": 5  # Limitando a 5 resultados para economizar chamadas
+            "maxItems": 5
         }
     }
 
     headers = {"Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=60) as client:
-        try:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            run_data = response.json()
-            run_id = run_data.get("data", {}).get("id")
+        for url in [url_actors, url_acts]:  # Testa as duas versões da API
+            try:
+                response = await client.post(url, json=payload, headers=headers)
+                if response.status_code == 201:  # Sucesso
+                    run_data = response.json()
+                    run_id = run_data.get("data", {}).get("id")
+                    if run_id:
+                        return run_id
+                elif response.status_code == 403:
+                    return {"error": "Permissão negada para acessar o ator na Apify. Verifique as configurações."}
+                elif response.status_code == 404:
+                    continue  # Tenta a outra URL
 
-            if not run_id:
-                return {"error": "Erro ao iniciar o scraper: ID da execução não retornado."}
+            except httpx.HTTPStatusError as e:
+                return {"error": f"Erro na API Apify: {e.response.status_code}"}
+            except httpx.RequestError:
+                return {"error": "Erro de conexão com a API Apify"}
 
-            return run_id
-        except httpx.HTTPStatusError as e:
-            return {"error": f"Erro ao iniciar o scraper na Apify: {e.response.status_code}"}
-        except httpx.RequestError:
-            return {"error": "Erro de conexão com a API Apify"}
+    return {"error": "Não foi possível iniciar o scraper na Apify."}
 
 async def aguardar_scraper_indeed(run_id: str):
-    """Aguarda a conclusão do scraper da Apify"""
+    """Aguarda a conclusão do scraper na Apify"""
     url = f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}"
-    
+
     async with httpx.AsyncClient(timeout=60) as client:
-        for _ in range(15):  # Tenta por até 3 minutos (15 tentativas de 12s)
+        for _ in range(15):  # Até 3 minutos (15 tentativas de 12s)
             try:
                 response = await client.get(url)
                 response.raise_for_status()
@@ -87,34 +93,17 @@ async def aguardar_scraper_indeed(run_id: str):
                 elif status in ["FAILED", "ABORTED", "TIMED-OUT"]:
                     return {"error": f"Scraper falhou com status: {status}"}
 
-                await asyncio.sleep(12)  # Aguarda 12 segundos antes de tentar novamente
+                await asyncio.sleep(12)
 
             except httpx.RequestError:
                 return {"error": "Erro ao verificar o status do scraper na Apify"}
-    
+
     return {"error": "Scraper demorou muito para finalizar"}
 
-async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
-    """Busca vagas no Jooble"""
-    payload = {"keywords": termo, "location": localizacao, "page": pagina}
-    headers = {"Content-Type": "application/json"}
-
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            response = await client.post(f"{JOOBLE_API_URL}{JOOBLE_API_KEY}", json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-        except httpx.HTTPStatusError as e:
-            return {"error": f"Erro na API Jooble: {e.response.status_code}"}
-        except httpx.RequestError:
-            return {"error": "Erro de conexão com a API Jooble"}
-
-    return data.get("jobs", [])[:15]
-
 async def buscar_vagas_indeed(run_id: str):
-    """Busca os resultados do scraper do Indeed na Apify"""
+    """Busca os resultados do scraper na Apify"""
     url = f"https://api.apify.com/v2/actor-runs/{run_id}/dataset/items?token={APIFY_API_TOKEN}"
-    
+
     async with httpx.AsyncClient(timeout=30) as client:
         try:
             response = await client.get(url)
@@ -125,11 +114,11 @@ async def buscar_vagas_indeed(run_id: str):
         except httpx.RequestError:
             return {"error": "Erro de conexão com a API Apify"}
 
-    return data[:5]  # Retorna no máximo 5 vagas do Indeed
+    return data[:5]  # Retorna no máximo 5 vagas
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
-    """Busca vagas no Jooble e Indeed, combinando os resultados"""
+    """Busca vagas no Indeed e combina com Jooble"""
     
     cache_key = f"{termo}_{localizacao}_{pagina}"
     cached_data = cache.get(cache_key)
@@ -137,31 +126,24 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
-    # Iniciar o scraper do Indeed dinamicamente
+    # Iniciar o scraper do Indeed
     run_id = await iniciar_scraper_indeed(termo, localizacao)
     
     if isinstance(run_id, dict) and "error" in run_id:
         return run_id
 
-    # Aguardar conclusão do scraper antes de buscar os dados
+    # Aguardar conclusão do scraper
     scraper_status = await aguardar_scraper_indeed(run_id)
     if isinstance(scraper_status, dict) and "error" in scraper_status:
         return scraper_status
 
-    # Buscar as vagas de ambas as APIs de forma assíncrona
-    jooble_task = buscar_vagas_jooble(termo, localizacao, pagina)
-    indeed_task = buscar_vagas_indeed(run_id)
+    # Buscar as vagas do Indeed
+    indeed_vagas = await buscar_vagas_indeed(run_id)
 
-    jooble_vagas, indeed_vagas = await asyncio.gather(jooble_task, indeed_task)
-
-    # Garantir que os 5 primeiros resultados sejam do Indeed
-    vagas_combinadas = (indeed_vagas or []) + (jooble_vagas or [])
-    vagas_combinadas = vagas_combinadas[:20]  # Retorna no máximo 20 vagas
-
-    if not vagas_combinadas:
-        return {"error": "Nenhuma vaga encontrada."}
+    if not indeed_vagas:
+        return {"error": "Nenhuma vaga encontrada no Indeed."}
 
     # Salva no cache por 6 horas (21600 segundos)
-    cache.set(cache_key, str(vagas_combinadas), ex=21600)
+    cache.set(cache_key, str(indeed_vagas), ex=21600)
 
-    return {"source": "live", "data": vagas_combinadas}
+    return {"source": "live", "data": indeed_vagas}
