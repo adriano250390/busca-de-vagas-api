@@ -4,11 +4,12 @@ import httpx
 import redis
 import os
 import asyncio
+import re
 from datetime import datetime, timedelta
 
 app = FastAPI()
 
-# Configuração do Redis (Cache) - Cache por 6 horas (21600 segundos)
+# Configuração do Redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -45,6 +46,33 @@ def health_check():
     """Rota de Health Check"""
     return {"status": "ok"}
 
+def converter_data_relativa(data_str):
+    """
+    Converte datas relativas do Jooble, como "há 14 horas atrás" ou "há 3 dias atrás",
+    para um formato absoluto (YYYY-MM-DD).
+    """
+    hoje = datetime.today()
+
+    # Caso seja um formato ISO já correto, retornamos diretamente
+    if "T" in data_str:
+        return data_str.split("T")[0]
+
+    # Expressão regular para encontrar números e palavras como "hora" ou "dia"
+    match = re.search(r"há (\d+) (hora|horas|dia|dias) atrás", data_str)
+    if match:
+        quantidade = int(match.group(1))
+        unidade = match.group(2)
+
+        if "dia" in unidade:
+            data_final = hoje - timedelta(days=quantidade)
+        else:
+            data_final = hoje - timedelta(hours=quantidade)
+
+        return data_final.strftime("%Y-%m-%d")
+
+    # Se não conseguir converter, retorna "Data não informada"
+    return "Data não informada"
+
 async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
     """Busca vagas no Jooble"""
     payload = {"keywords": termo, "location": localizacao, "page": pagina}
@@ -68,7 +96,7 @@ async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
             "empresa": vaga.get("company", "Empresa não informada"),
             "localizacao": vaga.get("location", "Local não informado"),
             "salario": vaga.get("salary", "Salário não informado"),
-            "data_atualizacao": vaga.get("updated", "Data não informada"),
+            "data_atualizacao": converter_data_relativa(vaga.get("updated", "Data não informada")),
             "link": vaga.get("link", "#"),
             "descricao": vaga.get("snippet", "Descrição não disponível"),
             "source": "Jooble"
@@ -105,13 +133,6 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
         }
         for vaga in data if termo.lower() in vaga.get("title", "").lower()
     ][:5]
-
-def converter_data(data_str):
-    """Converte string ISO 8601 para datetime, ignorando parte da hora"""
-    try:
-        return datetime.strptime(data_str.split("T")[0], "%Y-%m-%d").date()
-    except ValueError:
-        return None
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str = "", localizacao: str = "", pagina: int = 1, data_filtro: str = "todas"):
@@ -154,8 +175,7 @@ async def buscar_vagas(termo: str = "", localizacao: str = "", pagina: int = 1, 
         vagas_combinadas = [
             vaga for vaga in vagas_combinadas
             if vaga["data_atualizacao"] and vaga["data_atualizacao"] != "Data não informada"
-            and converter_data(vaga["data_atualizacao"]) is not None
-            and converter_data(vaga["data_atualizacao"]) >= data_limite
+            and datetime.strptime(vaga["data_atualizacao"], "%Y-%m-%d").date() >= data_limite
         ]
 
     cache.set(cache_key, str(vagas_combinadas), ex=21600)
