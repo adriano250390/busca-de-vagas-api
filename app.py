@@ -4,6 +4,7 @@ import httpx
 import redis
 import os
 import asyncio
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -84,7 +85,6 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
         except httpx.RequestError:
             return {"error": "Erro de conexão com a API Apify"}
 
-    # Filtra apenas vagas que contenham o termo buscado
     novas_vagas = [vaga for vaga in data if termo.lower() in vaga.get("title", "").lower()]
 
     return [
@@ -98,33 +98,47 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
             "descricao": vaga.get("description", "Descrição não disponível"),
             "source": "Indeed"
         }
-        for vaga in novas_vagas[:5]  # Retorna no máximo 5 vagas do Indeed
+        for vaga in novas_vagas[:5]
     ]
 
 @app.get("/buscar")
-async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1):
-    """Busca vagas no Jooble e Indeed, combinando os resultados"""
-    
-    cache_key = f"{termo}_{localizacao}_{pagina}"
+async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1, data_filtro: str = "todas"):
+    """Busca vagas no Jooble e Indeed, combinando os resultados com filtro de datas"""
+
+    cache_key = f"{termo}_{localizacao}_{pagina}_{data_filtro}"
     cached_data = cache.get(cache_key)
 
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
-    # Buscar as vagas de ambas as APIs de forma assíncrona
     jooble_task = buscar_vagas_jooble(termo, localizacao, pagina)
     indeed_task = buscar_vagas_indeed(termo, localizacao)
     
     jooble_vagas, indeed_vagas = await asyncio.gather(jooble_task, indeed_task)
 
-    # Garantir que os 5 primeiros resultados sejam do Indeed
     vagas_combinadas = (indeed_vagas or []) + (jooble_vagas or [])
-    vagas_combinadas = vagas_combinadas[:20]  # Retorna no máximo 20 vagas
+    vagas_combinadas = vagas_combinadas[:20]
 
     if not vagas_combinadas:
         return {"error": "Nenhuma vaga encontrada."}
 
-    # Salva no cache por 6 horas (21600 segundos)
+    # Filtro de data
+    hoje = datetime.today()
+    filtros = {
+        "hoje": hoje,
+        "ontem": hoje - timedelta(days=1),
+        "ultimos5dias": hoje - timedelta(days=5),
+        "ultimos10dias": hoje - timedelta(days=10),
+        "ultimos30dias": hoje - timedelta(days=30),
+    }
+
+    if data_filtro in filtros:
+        data_limite = filtros[data_filtro]
+        vagas_combinadas = [
+            vaga for vaga in vagas_combinadas if "data_atualizacao" in vaga and vaga["data_atualizacao"] != "Data não informada" and 
+            datetime.strptime(vaga["data_atualizacao"], "%Y-%m-%d") >= data_limite
+        ]
+
     cache.set(cache_key, str(vagas_combinadas), ex=21600)
 
     return {"source": "live", "data": vagas_combinadas}
