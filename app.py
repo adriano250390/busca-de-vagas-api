@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import redis
@@ -12,19 +12,18 @@ app = FastAPI()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 cache = redis.from_url(REDIS_URL, decode_responses=True)
 
-# Configuração da API Jooble
+# Configuração das APIs externas
 JOOBLE_API_KEY = "814146c8-68bb-45cd-acd7-cd907162dc28"
 JOOBLE_API_URL = "https://br.jooble.org/api/"
 
-# Configuração da API do Indeed Scraper (Apify)
 APIFY_API_TOKEN = "apify_api_JPdMIJwlO6TJZbubU2UUrkIZcqjUcU4zjtX1"
 APIFY_DATASET_ID = "7WlZplTf3Y0TNTQY3"
 
-# Habilitação de CORS com suporte para o site frontend
+# Configuração do CORS
 origins = [
-    "https://gray-termite-250383.hostingersite.com",  # Seu site hospedado
-    "http://localhost:3000",  # Para testes locais
-    "http://127.0.0.1:8000"  # Acesso via terminal local
+    "https://gray-termite-250383.hostingersite.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:8000"
 ]
 
 app.add_middleware(
@@ -43,7 +42,7 @@ def home():
 @app.get("/healthz")
 @app.head("/healthz")
 def health_check():
-    """Rota de Health Check para monitoramento"""
+    """Rota de Health Check"""
     return {"status": "ok"}
 
 async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
@@ -57,11 +56,11 @@ async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"Erro na API Jooble: {e.response.status_code}"}
+            print(f"Erro na API Jooble: {e.response.status_code}")
+            return []
         except httpx.RequestError:
-            return {"error": "Erro de conexão com a API Jooble"}
-
-    novas_vagas = data.get("jobs", [])[:15]  # Retorna no máximo 15 vagas do Jooble
+            print("Erro de conexão com a API Jooble")
+            return []
 
     return [
         {
@@ -74,7 +73,7 @@ async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
             "descricao": vaga.get("snippet", "Descrição não disponível"),
             "source": "Jooble"
         }
-        for vaga in novas_vagas
+        for vaga in data.get("jobs", [])[:15]
     ]
 
 async def buscar_vagas_indeed(termo: str, localizacao: str):
@@ -87,11 +86,11 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"Erro na API Apify: {e.response.status_code}"}
+            print(f"Erro na API Apify: {e.response.status_code}")
+            return []
         except httpx.RequestError:
-            return {"error": "Erro de conexão com a API Apify"}
-
-    novas_vagas = [vaga for vaga in data if termo.lower() in vaga.get("title", "").lower()]
+            print("Erro de conexão com a API Apify")
+            return []
 
     return [
         {
@@ -104,12 +103,22 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
             "descricao": vaga.get("description", "Descrição não disponível"),
             "source": "Indeed"
         }
-        for vaga in novas_vagas[:5]
-    ]
+        for vaga in data if termo.lower() in vaga.get("title", "").lower()
+    ][:5]
+
+def converter_data(data_str):
+    """Converte string ISO 8601 para datetime, ignorando parte da hora"""
+    try:
+        return datetime.strptime(data_str.split("T")[0], "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 @app.get("/buscar")
-async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1, data_filtro: str = "todas"):
-    """Busca vagas no Jooble e Indeed, combinando os resultados com filtro de datas"""
+async def buscar_vagas(termo: str = "", localizacao: str = "", pagina: int = 1, data_filtro: str = "todas"):
+    """Busca vagas no Jooble e Indeed, aplicando filtro de datas"""
+
+    if not termo and not localizacao:
+        raise HTTPException(status_code=400, detail="É necessário informar um termo de busca ou localização.")
 
     cache_key = f"{termo}_{localizacao}_{pagina}_{data_filtro}"
     cached_data = cache.get(cache_key)
@@ -117,19 +126,20 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1, data_
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
+    # Buscar as vagas de ambas as APIs
     jooble_task = buscar_vagas_jooble(termo, localizacao, pagina)
     indeed_task = buscar_vagas_indeed(termo, localizacao)
-    
+
     jooble_vagas, indeed_vagas = await asyncio.gather(jooble_task, indeed_task)
 
     vagas_combinadas = (indeed_vagas or []) + (jooble_vagas or [])
     vagas_combinadas = vagas_combinadas[:20]
 
     if not vagas_combinadas:
-        return {"error": "Nenhuma vaga encontrada."}
+        raise HTTPException(status_code=404, detail="Nenhuma vaga encontrada.")
 
     # Filtro de data
-    hoje = datetime.today()
+    hoje = datetime.today().date()
     filtros = {
         "hoje": hoje,
         "ontem": hoje - timedelta(days=1),
@@ -140,11 +150,13 @@ async def buscar_vagas(termo: str, localizacao: str = "", pagina: int = 1, data_
 
     if data_filtro in filtros:
         data_limite = filtros[data_filtro]
+
         vagas_combinadas = [
-            vaga for vaga in vagas_combinadas if "data_atualizacao" in vaga and vaga["data_atualizacao"] != "Data não informada" and 
-            datetime.strptime(vaga["data_atualizacao"], "%Y-%m-%d") >= data_limite
+            vaga for vaga in vagas_combinadas
+            if vaga["data_atualizacao"] and vaga["data_atualizacao"] != "Data não informada"
+            and converter_data(vaga["data_atualizacao"]) is not None
+            and converter_data(vaga["data_atualizacao"]) >= data_limite
         ]
 
     cache.set(cache_key, str(vagas_combinadas), ex=21600)
-
     return {"source": "live", "data": vagas_combinadas}
