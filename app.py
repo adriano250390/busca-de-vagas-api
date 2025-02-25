@@ -46,31 +46,47 @@ def health_check():
     """Rota de Health Check"""
     return {"status": "ok"}
 
-def converter_data_relativa(data_str):
+def converter_data_relativa(data_str: str) -> str:
     """
-    Converte datas relativas do Jooble, como "há 14 horas atrás" ou "há 3 dias atrás",
-    para um formato absoluto (YYYY-MM-DD).
+    Converte datas relativas do Jooble, por exemplo:
+    - "há 14 horas atrás"
+    - "há 3 dias atrás"
+    - "há 30 minutos atrás"
+    - "Nova"
+    - Formato ISO "2025-02-25T10:00:00"
+    
+    Para um formato absoluto (YYYY-MM-DD). Qualquer situação que não
+    se encaixar cai em "Data não informada".
+    
+    *Observação*: agora consideramos qualquer "hora(s)" ou "minuto(s)" como data de HOJE,
+    para que apareçam corretamente no filtro "hoje".
     """
     hoje = datetime.today()
 
-    # Caso seja um formato ISO já correto, retornamos diretamente
+    # 1) Caso seja um formato ISO ("2025-02-25T12:00:00"), usamos só a parte YYYY-MM-DD
     if "T" in data_str:
         return data_str.split("T")[0]
 
-    # Expressão regular para encontrar números e palavras como "hora" ou "dia"
-    match = re.search(r"há (\d+) (hora|horas|dia|dias) atrás", data_str)
+    # 2) Se o texto tiver "Nova" (ou "nova"), consideramos como hoje
+    if "nova" in data_str.lower():
+        return hoje.strftime("%Y-%m-%d")
+
+    # 3) Expressão regular para encontrar "há X unidade atrás" (minutos, horas, dias)
+    match = re.search(r"há\s+(\d+)\s+(minuto|minutos|hora|horas|dia|dias)\s+atrás", data_str.lower())
     if match:
         quantidade = int(match.group(1))
         unidade = match.group(2)
 
         if "dia" in unidade:
+            # Subtrai o número de dias
             data_final = hoje - timedelta(days=quantidade)
         else:
-            data_final = hoje - timedelta(hours=quantidade)
+            # Para horas ou minutos, consideramos a vaga ainda como "hoje"
+            data_final = hoje
 
         return data_final.strftime("%Y-%m-%d")
 
-    # Se não conseguir converter, retorna "Data não informada"
+    # 4) Se não conseguir converter, retorna "Data não informada"
     return "Data não informada"
 
 async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
@@ -90,6 +106,7 @@ async def buscar_vagas_jooble(termo: str, localizacao: str, pagina: int):
             print("Erro de conexão com a API Jooble")
             return []
 
+    # Monta a lista de vagas
     return [
         {
             "titulo": vaga.get("title", "Sem título"),
@@ -120,6 +137,7 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
             print("Erro de conexão com a API Apify")
             return []
 
+    # Filtra os resultados do Apify pelo termo, depois retorna apenas 5
     return [
         {
             "titulo": vaga.get("title", "Sem título"),
@@ -136,23 +154,32 @@ async def buscar_vagas_indeed(termo: str, localizacao: str):
 
 @app.get("/buscar")
 async def buscar_vagas(termo: str = "", localizacao: str = "", pagina: int = 1, data_filtro: str = "todas"):
-    """Busca vagas no Jooble e Indeed, aplicando filtro de datas"""
+    """
+    Busca vagas no Jooble e Indeed, aplicando filtro de datas.
+    Parâmetros:
+      - termo: cargo ou palavra-chave
+      - localizacao: cidade/estado
+      - pagina: página de resultados do Jooble
+      - data_filtro: hoje, ontem, ultimos5dias, ultimos10dias, ultimos30dias ou todas
+    """
 
     if not termo and not localizacao:
         raise HTTPException(status_code=400, detail="É necessário informar um termo de busca ou localização.")
 
+    # Chave de cache para evitar consultas repetidas em curto intervalo
     cache_key = f"{termo}_{localizacao}_{pagina}_{data_filtro}"
     cached_data = cache.get(cache_key)
 
     if cached_data:
         return {"source": "cache", "data": eval(cached_data)}
 
-    # Buscar as vagas de ambas as APIs
+    # Dispara buscas simultâneas no Jooble e Indeed
     jooble_task = buscar_vagas_jooble(termo, localizacao, pagina)
     indeed_task = buscar_vagas_indeed(termo, localizacao)
 
     jooble_vagas, indeed_vagas = await asyncio.gather(jooble_task, indeed_task)
 
+    # Combina os resultados (limita a 20 vagas no total)
     vagas_combinadas = (indeed_vagas or []) + (jooble_vagas or [])
     vagas_combinadas = vagas_combinadas[:20]
 
@@ -171,12 +198,14 @@ async def buscar_vagas(termo: str = "", localizacao: str = "", pagina: int = 1, 
 
     if data_filtro in filtros:
         data_limite = filtros[data_filtro]
-
         vagas_combinadas = [
             vaga for vaga in vagas_combinadas
-            if vaga["data_atualizacao"] and vaga["data_atualizacao"] != "Data não informada"
+            if vaga["data_atualizacao"]
+            and vaga["data_atualizacao"] != "Data não informada"
             and datetime.strptime(vaga["data_atualizacao"], "%Y-%m-%d").date() >= data_limite
         ]
 
+    # Grava no cache por 6 horas (21600 segundos)
     cache.set(cache_key, str(vagas_combinadas), ex=21600)
+
     return {"source": "live", "data": vagas_combinadas}
