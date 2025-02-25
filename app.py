@@ -20,12 +20,18 @@ JOOBLE_API_URL = "https://br.jooble.org/api/"
 APIFY_API_TOKEN = "apify_api_JPdMIJwlO6TJZbubU2UUrkIZcqjUcU4zjtX1"
 APIFY_DATASET_ID = "7WlZplTf3Y0TNTQY3"
 
-# Habilitar CORS corretamente
+# Habilitação de CORS com suporte para o site frontend
+origins = [
+    "https://gray-termite-250383.hostingersite.com",  # Seu site hospedado
+    "http://localhost:3000",  # Para testes locais
+    "http://127.0.0.1:8000"  # Acesso via terminal local
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://gray-termite-250383.hostingersite.com"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -35,7 +41,7 @@ def home():
     return {"message": "API de busca de vagas está rodando!"}
 
 @app.get("/healthz")
-@app.head("/healthz")  
+@app.head("/healthz")
 def health_check():
     """Rota de Health Check para monitoramento"""
     return {"status": "ok"}
