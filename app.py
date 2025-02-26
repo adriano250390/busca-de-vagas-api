@@ -198,12 +198,24 @@ async def buscar_vagas(termo: str = "", localizacao: str = "", pagina: int = 1, 
 
     if data_filtro in filtros:
         data_limite = filtros[data_filtro]
-        vagas_combinadas = [
-            vaga for vaga in vagas_combinadas
-            if vaga["data_atualizacao"]
-            and vaga["data_atualizacao"] != "Data não informada"
-            and datetime.strptime(vaga["data_atualizacao"], "%Y-%m-%d").date() >= data_limite
-        ]
+        vagas_filtradas = []
+for vaga in vagas_combinadas:
+    data_str = vaga["data_atualizacao"]
+    
+    if data_str and data_str != "Data não informada":
+        try:
+            data_vaga = datetime.strptime(data_str, "%Y-%m-%d").date()
+            if data_vaga >= data_limite:
+                vagas_filtradas.append(vaga)
+        except ValueError:
+            print(f"Erro ao converter data: {data_str}")  # Para debug
+
+# Se a filtragem removeu tudo, exibir debug
+if not vagas_filtradas:
+    print(f"🔴 Nenhuma vaga foi encontrada para o filtro {data_filtro}")
+
+vagas_combinadas = vagas_filtradas
+
 
     # Grava no cache por 6 horas (21600 segundos)
     cache.set(cache_key, str(vagas_combinadas), ex=21600)
